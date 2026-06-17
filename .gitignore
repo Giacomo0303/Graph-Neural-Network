@@ -3,3 +3,9 @@ Reddit/processed/pre_filter.pt
 Reddit/processed/pre_transform.pt
 Reddit/raw/reddit_data.npz
 Reddit/raw/reddit_graph.npz
+best_model_task1_GAT.pth
+.gitignore
+.gitignore
+best_model_task1_GCN.pth
+best_model_task1_SAGE.pth
+__pycache__/utils_task1.cpython-312.pyc
