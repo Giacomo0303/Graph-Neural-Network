@@ -9,3 +9,10 @@ best_model_task1_GAT.pth
 best_model_task1_GCN.pth
 best_model_task1_SAGE.pth
 __pycache__/utils_task1.cpython-312.pyc
+best_model_task2_GAT.pth
+best_model_task2_GCN.pth
+best_model_task2_SAGE.pth
+__pycache__/utils_task2.cpython-312.pyc
+__pycache__/utils_task3.cpython-312.pyc
+__pycache__/utils_task2.cpython-312.pyc
+__pycache__/utils_task2.cpython-312.pyc

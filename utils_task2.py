@@ -176,7 +176,7 @@ def train_loop(num_epochs, model, train_loader, val_loader, optimizer, loss_fn, 
     val_losses = []
     for epoch in range(1, num_epochs + 1):
         loss_t = train_epoch(epoch, model, train_loader, optimizer, loss_fn, device, scaler)
-        val_metrics = evaluate(val_loader, desc=f"Epoca {epoch:02d} [Val Link]")
+        val_metrics = evaluate(model, val_loader, loss_fn, device)
         print(f"Epoca: {epoch:02d}/{num_epochs:02d} |"
               f"Loss Train: {loss_t:.4f} | "
               f"Loss Val: {val_metrics['val_loss']:.4f} | "
@@ -200,10 +200,10 @@ def train_loop(num_epochs, model, train_loader, val_loader, optimizer, loss_fn, 
                 print("Early stopping attivato. Interruzione dell'addestramento.")
                 break
             
-        return {
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-        }
+    return {
+        "train_losses": train_losses,
+        "val_losses": val_losses,
+    }
         
 def plot_history(history, title):
     train_loss, val_loss = history["train_losses"], history["val_losses"]
