@@ -1,0 +1,5 @@
+Reddit/processed/data.pt
+Reddit/processed/pre_filter.pt
+Reddit/processed/pre_transform.pt
+Reddit/raw/reddit_data.npz
+Reddit/raw/reddit_graph.npz
