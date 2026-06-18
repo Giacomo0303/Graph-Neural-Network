@@ -16,3 +16,8 @@ __pycache__/utils_task2.cpython-312.pyc
 __pycache__/utils_task3.cpython-312.pyc
 __pycache__/utils_task2.cpython-312.pyc
 __pycache__/utils_task2.cpython-312.pyc
+reddit_task3_clusters_b.pt
+reddit_task3_clusters_a.pt
+best_model_task3_GCN.pth
+best_model_task3_b_GCN.pth
+__pycache__/utils_task3_b.cpython-312.pyc
