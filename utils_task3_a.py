@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 import torch
 import numpy as np
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool
+from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,SAGEConv
 from sklearn.metrics import  balanced_accuracy_score, f1_score
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -34,64 +34,68 @@ class RedditSubGraphDataset:
         
         #split stratificato per mantenere la distribuzione delle classi nei set di train, val e test 
 
-        labels_grezze = [subgraph.y.item() for subgraph in graphs]
+        raw_labels = [subgraph.y.item() for subgraph in graphs]
     
-        # 2. Conto quante volte compare ogni community
-        conteggio_classi = Counter(labels_grezze)
+        #conteggio quante volte compare ogni label
+        class_count = Counter(raw_labels)
         
-        # 3. FILTRAGGIO CRUCIALE: Teniamo solo i grafi la cui classe compare almeno 2 volte
-        graphs_filtrati = []
-        labels_filtrate = []
-        
-        for subgraph, label in zip(graphs, labels_grezze):
-            if conteggio_classi[label] >= 10: # <-- Soglia di predicibilità
-                graphs_filtrati.append(subgraph)
-                labels_filtrate.append(label)
+        if self.task_type == "a":
+            #per il task a non ci sono problemi di stratify perchè le 2 classi hanno tanti campioni, quindi non rimuoviamo nulla
+            graphs_filtrati = graphs
+            labels_filtrate = raw_labels
+        elif self.task_type == "b":
+            #teniamo solo i grafi la cui classe compare almeno 10 volte per evitare errori nello stratify
+            graphs_filtrati = []
+            labels_filtrate = []
+            
+            for subgraph, label in zip(graphs, raw_labels):
+                if class_count[label] >= 10:
+                    graphs_filtrati.append(subgraph)
+                    labels_filtrate.append(label)
                 
-        print(f"Rimossi {len(graphs) - len(graphs_filtrati)} grafi impredicibili.")
-        print(f"Grafi totali rimasti per il Task B: {len(graphs_filtrati)}")
+            print(f"Rimossi {len(graphs) - len(graphs_filtrati)} grafi impredicibili.")
+            print(f"Grafi totali rimasti per il Task B: {len(graphs_filtrati)}")
 
-        # 4. SPLIT STRATIFICATO BLINDATO (Ora funziona al 100% perché non ci sono membri singoli)
+        #split stratificato in train, val e test (80% train, 10% val, 10% test)
         train_graphs, temp_graphs, _, y_temp = train_test_split(
             graphs_filtrati, 
             labels_filtrate, 
             test_size=0.20, 
-            stratify=labels_filtrate, # <-- Ritorna attivo e sicuro!
+            stratify=labels_filtrate,
             random_state=42
         )
-
         val_graphs, test_graphs = train_test_split(
             temp_graphs, 
             test_size=0.50, 
             stratify=y_temp, 
             random_state=42
         )
-
         return train_graphs, val_graphs, test_graphs
 
 
     def calcola_label_task_a(self, cluster_data):
         densita_clusters = []
 
-        # Calcolo della densità interna di ogni singolo sotto-grafo
+        #calcolo della densità interna di ogni singolo sotto-grafo
         for i in range(len(cluster_data)):
             subgraph = cluster_data[i]
             v = subgraph.num_nodes
             e = subgraph.num_edges
 
             if v > 1:
-                # Formula della densità topologica per grafi
+                #formula della densità topologica per grafi, omettiamo il fattore 2 perché in PyG gli edge sono diretti 
+                # e quindi ogni edge è contato due volte
                 d = e / (v * (v - 1))
             else:
                 d = 0.0
 
             densita_clusters.append(d)
 
-        # Calcolo della densità media globale
+        #calcolo della densità media globale
         media_globale = np.mean(densita_clusters)
         print(f"Densità interna media dei sotto-grafi: {media_globale:.6f}\n")
 
-        # Assegnazione delle label
+        #assegnazione delle label
         grafi_finali = []
         conteggio_classi = {0: 0, 1: 0}
 
@@ -99,7 +103,7 @@ class RedditSubGraphDataset:
             subgraph = cluster_data[i]
             densita_corrente = densita_clusters[i]
 
-            # Target = 1 se sopra la media, 0 se sotto la media
+            # target = 1 se sopra la media, 0 se sotto la media
             if densita_corrente > media_globale:
                 label = 1
             else:
@@ -121,14 +125,15 @@ class RedditSubGraphDataset:
 
     def calcola_label_task_b(self, cluster_data):
         grafi_finali = []
-
+        
+        #iteriamo su ogni sotto-grafo
         for i in range(len(cluster_data)):
-            subgraph = cluster_data[i]  # Estrae il sotto-grafo i-esimo isolato
+            subgraph = cluster_data[i] 
 
-            # Calcolo del target sulla base della community di maggioranza
+            # Calcolo del target sulla base della community di maggioranza, bincount conta le frequenze e max prende il massimo
             values, _ = torch.bincount(subgraph.y).max(dim=0)
 
-            subgraph.y = values  # Ora y è un singolo scalare per l'intero sotto-grafo
+            subgraph.y = values  # ora y è un singolo scalare per l'intero sotto-grafo
 
             grafi_finali.append(subgraph)
 
@@ -153,7 +158,8 @@ def train_epoch(model, loader, optimizer, loss_fn, device,scaler=None):
         else:
             loss.backward()
             optimizer.step()
-        
+            
+        # Accumuliamo la loss pesata per il numero di grafi nel batch
         running_loss += loss.item() * batch.num_graphs
         
     # Calcoliamo la loss media reale per grafo
@@ -188,7 +194,7 @@ def evaluate(model, loader, loss_fn, device):
     y_pred_binary = (all_preds >= 0.5).astype(int)
     acc = balanced_accuracy_score(all_targets, y_pred_binary)
     
-    # 'weighted' calcola l'F1 per ogni classe e ne fa la media pesata sul numero di campioni,
+    # 'weighted' calcola l'F1 per ogni classe e ne fa la media pesata sul numero di campioni
     f1_bilanciato = f1_score(all_targets, y_pred_binary, average='weighted')
     
     return {
@@ -234,37 +240,14 @@ def train_loop(model, train_loader, val_loader, optimizer, loss_fn, device, num_
     }
 
 
-def plot_history(history, title):
-    train_loss, val_loss = history["train_losses"], history["val_losses"]
-    epochs = range(1, len(train_loss) + 1)
-    plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_loss, label="Train Loss", color="#1f77b4", linewidth=2)
-    plt.plot(
-        epochs,
-        val_loss,
-        label="Validation Loss",
-        color="#ff7f0e",
-        linewidth=2,
-        linestyle="--",
-    )
-    plt.title(title, fontsize=14, fontweight="bold", pad=15)
-    plt.xlabel("Epoche", fontsize=12)
-    plt.ylabel("Loss", fontsize=12)
-    plt.grid(True, linestyle=":", alpha=0.6)
-    plt.legend(fontsize=11)
-    plt.show()
-
-
-
-
 
 class HierarchicalGCNClassifier(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels):
+    def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.2):
         super().__init__()
         
         # BLOCCO 1
         self.conv1 = GCNConv(in_channels, hidden_channels)
-        # Tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
+        # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
         self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
         
         # BLOCCO 2
@@ -276,29 +259,128 @@ class HierarchicalGCNClassifier(torch.nn.Module):
         
         # Classificatore finale
         self.lin = torch.nn.Linear(hidden_channels, out_channels)
+        
+        self.dropout = dropout
 
     def forward(self, x, edge_index, batch):
         x = self.conv1(x, edge_index)
         x = F.relu(x)
-        x = F.dropout(x, p=0.2, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training)
         
-        # Il pooling gerarchico taglia i nodi meno importanti.
-        # Restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
+        #il pooling gerarchico taglia i nodi meno importanti sulla base dei punteggi di rilevanza appresi.
+        #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
         x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         x = self.conv2(x, edge_index)
         x = F.relu(x)
-        x = F.dropout(x, p=0.2, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training)
         
-     
         x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
         
         x = self.conv3(x, edge_index)
         x = F.relu(x)
-        
-        # Solo ora applichiamo il Global Mean Pool per condesare le informazioni di tutti i nodi rimasti in un singolo vettore per grafo
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        #solo ora applichiamo il Global Mean Pool per condesare le informazioni di tutti i nodi rimasti 
+        # in un singolo vettore per grafo
         x = global_mean_pool(x, batch)
         
         # Classificazione finale dell'intero grafo
         out = self.lin(x)
         return out
+    
+
+class HierarchicalSAGEConvClassifier(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.2):
+        super().__init__()
+        
+        # BLOCCO 1
+        self.conv1 = SAGEConv(in_channels, hidden_channels)
+        # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
+        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        
+        # BLOCCO 2
+        self.conv2 = SAGEConv(hidden_channels, hidden_channels)
+        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        
+        # BLOCCO 3 
+        self.conv3 = SAGEConv(hidden_channels, hidden_channels)
+        
+        # Classificatore finale
+        self.lin = torch.nn.Linear(hidden_channels, out_channels)
+        
+        self.dropout = dropout
+
+    def forward(self, x, edge_index, batch):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        #il pooling gerarchico taglia i nodi meno importanti sulla base dei punteggi di rilevanza appresi.
+        #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
+        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+
+        x = self.conv2(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        
+        x = self.conv3(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        #solo ora applichiamo il Global Mean Pool per condesare le informazioni di tutti i nodi rimasti 
+        # in un singolo vettore per grafo
+        x = global_mean_pool(x, batch)
+        
+        # Classificazione finale dell'intero grafo
+        out = self.lin(x)
+        return out
+
+
+class HierarchicalGATClassifier(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.2):
+        super().__init__()
+        
+        # BLOCCO 1
+        self.conv1 = GATConv(in_channels, hidden_channels)
+        # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
+        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        
+        # BLOCCO 2
+        self.conv2 = GATConv(hidden_channels, hidden_channels)
+        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        
+        # BLOCCO 3 
+        self.conv3 = GATConv(hidden_channels, hidden_channels)
+        
+        # Classificatore finale
+        self.lin = torch.nn.Linear(hidden_channels, out_channels)
+        
+        self.dropout = dropout
+
+    def forward(self, x, edge_index, batch):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        #il pooling gerarchico taglia i nodi meno importanti sulla base dei punteggi di rilevanza appresi.
+        #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
+        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+
+        x = self.conv2(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        
+        x = self.conv3(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        #solo ora applichiamo il Global Mean Pool per condesare le informazioni di tutti i nodi rimasti 
+        # in un singolo vettore per grafo
+        x = global_mean_pool(x, batch)
+        
+        # Classificazione finale dell'intero grafo
+        out = self.lin(x)
+        return out
+    
