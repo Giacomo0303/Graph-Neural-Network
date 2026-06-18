@@ -16,6 +16,7 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     precision_score,
     recall_score,
+    confusion_matrix,
 )
 import matplotlib.pyplot as plt
 
@@ -202,10 +203,11 @@ def train_epoch(
     return total_loss / stats.train_size
 
 
-def evaluate(model, val_loader, loss_fn, device):
+def evaluate(model, val_loader, loss_fn, device, test=False):
     model.eval()
     all_preds = []
     all_targets = []
+    all_probs = []
     total_loss = 0.0
     total_samples = 0
 
@@ -213,7 +215,6 @@ def evaluate(model, val_loader, loss_fn, device):
         batch = batch.to(device)
         with torch.no_grad():
             out = model(batch.x, batch.edge_index)
-            # calcolo della loss solo sui nodi effettivi del batch senza considerare i vicini che protrebbero essere di validation o test
             loss = loss_fn(out[: batch.batch_size], batch.y[: batch.batch_size])
         total_loss += loss.item() * batch.batch_size
         total_samples += batch.batch_size
@@ -223,9 +224,12 @@ def evaluate(model, val_loader, loss_fn, device):
 
         all_preds.append(preds.cpu())
         all_targets.append(targets.cpu())
+        probs = F.softmax(out[: batch.batch_size], dim=-1)
+        all_probs.append(probs.cpu())
 
     y_pred = torch.cat(all_preds, dim=0).numpy()
     y_true = torch.cat(all_targets, dim=0).numpy()
+    y_pred_prob = torch.cat(all_probs, dim=0).numpy()
 
     f1_macro = f1_score(y_true, y_pred, average="macro")
     precision_macro = precision_score(y_true, y_pred, average="macro", zero_division=0)
@@ -233,14 +237,18 @@ def evaluate(model, val_loader, loss_fn, device):
     balanced_acc = balanced_accuracy_score(y_true, y_pred)
     avg_loss = total_loss / total_samples
 
+    cm = confusion_matrix(y_true, y_pred) if test else None
+
     return SimpleNamespace(
         f1_macro=f1_macro,
         precision_macro=precision_macro,
         recall_macro=recall_macro,
         balanced_acc=balanced_acc,
         avg_loss=avg_loss,
-        y_pred=y_pred,
-        y_true=y_true,
+        confusion_matrix=cm,
+        y_pred=y_pred if test else None,
+        y_true=y_true if test else None,
+        y_pred_prob=y_pred_prob if test else None,
     )
 
 

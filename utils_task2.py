@@ -7,7 +7,7 @@ from torch_geometric.loader import LinkNeighborLoader
 from torch_geometric.nn import GCNConv, SAGEConv,GATv2Conv
 import torch.nn.functional as F
 from tqdm import tqdm
-from sklearn.metrics import roc_auc_score, average_precision_score, balanced_accuracy_score, f1_score
+from sklearn.metrics import roc_auc_score, average_precision_score, balanced_accuracy_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
 
 class RedditLinkDataset:
@@ -119,10 +119,10 @@ def train_epoch(epoch_idx,model,train_loader,optimizer,loss_fn,device,scaler=Non
         
         pbar.set_postfix({"loss": f"{loss.item():.4f}"})
         
-    return total_loss / total_samples if total_samples > 0 else 0.0
+    return total_loss / total_samples
 
 
-def evaluate(model, val_loader, loss_fn, device):
+def evaluate(model, val_loader, loss_fn, device, test=False):
     model.eval()
     all_preds = []
     all_targets = []
@@ -150,21 +150,26 @@ def evaluate(model, val_loader, loss_fn, device):
     y_pred = torch.cat(all_preds, dim=0).numpy()
     y_true = torch.cat(all_targets, dim=0).numpy()
     
-    avg_val_loss = total_loss / total_samples if total_samples > 0 else 0.0
+    avg_val_loss = total_loss / total_samples
     y_pred_binary = (y_pred >= 0.5).astype(int)
     
     # Calcolo delle metriche richieste
     auc = roc_auc_score(y_true, y_pred)
     ap = average_precision_score(y_true, y_pred)
     balanced_acc = balanced_accuracy_score(y_true, y_pred_binary)
-    f1 = f1_score(y_true, y_pred_binary, zero_division=0)
+    f1 = f1_score(y_true, y_pred_binary)
+    
+    cm = confusion_matrix(y_true, y_pred_binary) if test else None
     
     return {
         "val_loss": avg_val_loss,
         "roc_auc": auc,
         "average_precision": ap,
         "balanced_accuracy": balanced_acc,
-        "f1_score": f1
+        "f1_score": f1,
+        "confusion_matrix": cm,
+        "y_pred": y_pred if test else None,
+        "y_true": y_true if test else None
     }
     
     
@@ -205,26 +210,6 @@ def train_loop(num_epochs, model, train_loader, val_loader, optimizer, loss_fn, 
         "val_losses": val_losses,
     }
         
-def plot_history(history, title):
-    train_loss, val_loss = history["train_losses"], history["val_losses"]
-    epochs = range(1, len(train_loss) + 1)
-    plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_loss, label="Train Loss", color="#1f77b4", linewidth=2)
-    plt.plot(
-        epochs,
-        val_loss,
-        label="Validation Loss",
-        color="#ff7f0e",
-        linewidth=2,
-        linestyle="--",
-    )
-    plt.title(title, fontsize=14, fontweight="bold", pad=15)
-    plt.xlabel("Epoche", fontsize=12)
-    plt.ylabel("Loss", fontsize=12)
-    plt.grid(True, linestyle=":", alpha=0.6)
-    plt.legend(fontsize=11)
-    plt.show()
-
 
 class GCNLinkPredictor(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels,dropout=0.25):
