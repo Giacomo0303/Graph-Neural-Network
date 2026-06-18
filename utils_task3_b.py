@@ -1,10 +1,41 @@
+from collections import Counter
+from torch_geometric.datasets import Reddit
+from torch_geometric.loader import ClusterData
+from sklearn.model_selection import train_test_split
 import torch
 import numpy as np
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,global_max_pool
 from sklearn.metrics import  balanced_accuracy_score, f1_score
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+
+def train_epoch(model, loader, optimizer, loss_fn, device,scaler=None):
+    model.train()
+    running_loss = 0.0
+    
+    for batch in tqdm(loader,desc= "Training..."):
+        batch = batch.to(device)
+        optimizer.zero_grad()
+        
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
+            out = model(batch.x, batch.edge_index, batch.batch)
+            loss = loss_fn(out, batch.y)
+        
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+        
+        running_loss += loss.item() * batch.num_graphs
+        
+    # Calcoliamo la loss media reale per grafo
+    epoch_loss = running_loss / len(loader.dataset)
+    return epoch_loss
 
 def evaluate(model, loader, loss_fn, device):
     model.eval()
@@ -41,6 +72,63 @@ def evaluate(model, loader, loss_fn, device):
         "f1_score": f1_bilanciato,
         "val_loss": val_loss / len(loader.dataset)
     }
+
+
+def train_loop(model, train_loader, val_loader, optimizer, loss_fn, device, num_epochs,best_model_path, scaler=None,patience=5):
+    best_val_loss = float('inf')
+    best_model_state = None
+    patience_counter = 0
+    train_losses = []
+    val_losses = []
+
+    for epoch in range(num_epochs):
+        train_loss = train_epoch(model, train_loader, optimizer, loss_fn, device,scaler)
+        val_metrics = evaluate(model, val_loader, loss_fn, device)
+
+        train_losses.append(train_loss)
+        val_losses.append(val_metrics['val_loss'])
+        print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {train_loss:.4f} - Val Loss: {val_metrics['val_loss']:.4f} - Balanced Accuracy: {val_metrics['balanced_accuracy']:.4f} - F1 Score: {val_metrics['f1_score']:.4f}")
+
+
+        # Salvataggio del modello migliore basato sulla loss di validazione
+        if val_metrics['val_loss'] < best_val_loss:
+            best_val_loss = val_metrics['val_loss']
+            best_model_state = model.state_dict()
+            torch.save(best_model_state, best_model_path)
+            print(f"Nuovo miglior modello salvato con Val Loss: {best_val_loss:.4f}")
+            patience_counter = 0 
+        else:
+            patience_counter += 1
+            print(f"Nessun miglioramento. Contatore di pazienza: {patience_counter}/{patience}")
+            if patience_counter >= patience:
+                print("Early stopping attivato.")
+                break
+        print("-----------------------------------------------")
+    return {
+        "train_losses": train_losses,
+        "val_losses": val_losses,
+    }
+
+
+def plot_history(history, title):
+    train_loss, val_loss = history["train_losses"], history["val_losses"]
+    epochs = range(1, len(train_loss) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, train_loss, label="Train Loss", color="#1f77b4", linewidth=2)
+    plt.plot(
+        epochs,
+        val_loss,
+        label="Validation Loss",
+        color="#ff7f0e",
+        linewidth=2,
+        linestyle="--",
+    )
+    plt.title(title, fontsize=14, fontweight="bold", pad=15)
+    plt.xlabel("Epoche", fontsize=12)
+    plt.ylabel("Loss", fontsize=12)
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.legend(fontsize=11)
+    plt.show()
 
 
 
