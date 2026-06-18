@@ -21,3 +21,8 @@ reddit_task3_clusters_a.pt
 best_model_task3_GCN.pth
 best_model_task3_b_GCN.pth
 __pycache__/utils_task3_b.cpython-312.pyc
+best_model_task3a_GAT.pth
+best_model_task3a_GCN.pth
+best_model_task3a_GIN.pth
+best_model_task3a_SAGE.pth
+__pycache__/utils_task3_a.cpython-312.pyc

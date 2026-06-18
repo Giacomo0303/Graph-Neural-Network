@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 import torch
 import numpy as np
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,SAGEConv,GATv2Conv,GINConv
+from torch_geometric.nn import GCNConv, global_mean_pool,SAGEConv,GATv2Conv,GINConv
 from sklearn.metrics import  balanced_accuracy_score, f1_score,confusion_matrix
 from tqdm import tqdm
 from torch.nn import Linear, BatchNorm1d, ReLU, Sequential
@@ -125,15 +125,18 @@ class RedditSubGraphDataset:
 
     def calcola_label_task_b(self, cluster_data):
         grafi_finali = []
-        
-        #iteriamo su ogni sotto-grafo
+
         for i in range(len(cluster_data)):
-            subgraph = cluster_data[i] 
+            subgraph = cluster_data[i] # estrae il sotto-grafo i-esimo
 
-            # Calcolo del target sulla base della community di maggioranza, bincount conta le frequenze e max prende il massimo
-            values, _ = torch.bincount(subgraph.y).max(dim=0)
+            # Calcoliamo la frequenza di ogni ID community nel sotto-grafo
+            conteggi = torch.bincount(subgraph.y)
 
-            subgraph.y = values  # ora y è un singolo scalare per l'intero sotto-grafo
+            # 2. .argmax() prende l'INDICE del valore più alto (ovvero la community dominante)
+            community_maggioranza = conteggi.argmax()
+
+            # 3. Assegniamo la vera community come scalare per l'intero grafo
+            subgraph.y = community_maggioranza.long()
 
             grafi_finali.append(subgraph)
 
@@ -252,11 +255,11 @@ class HierarchicalGCNClassifier(torch.nn.Module):
         # BLOCCO 1
         self.conv1 = GCNConv(in_channels, hidden_channels)
         # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
-        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        #self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
         
         # BLOCCO 2
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        #self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
         
         # BLOCCO 3 
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
@@ -275,13 +278,13 @@ class HierarchicalGCNClassifier(torch.nn.Module):
         #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
         #_ sono edge_attr che non ce ne sono, perm cioè gli indici dei nodi superstiti, e attn_score cioè i punteggi di rilevanza per nodo
         # tutte info non rilevanti per il nostro task
-        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         x = self.conv2(x, edge_index)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
-        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
         
         x = self.conv3(x, edge_index)
         x = F.relu(x)
@@ -302,11 +305,11 @@ class HierarchicalSAGEConvClassifier(torch.nn.Module):
         # BLOCCO 1
         self.conv1 = SAGEConv(in_channels, hidden_channels)
         # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
-        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        #self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
         
         # BLOCCO 2
         self.conv2 = SAGEConv(hidden_channels, hidden_channels)
-        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        #self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
         
         # BLOCCO 3 
         self.conv3 = SAGEConv(hidden_channels, hidden_channels)
@@ -323,13 +326,13 @@ class HierarchicalSAGEConvClassifier(torch.nn.Module):
         
         #il pooling gerarchico taglia i nodi meno importanti sulla base dei punteggi di rilevanza appresi.
         #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
-        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         x = self.conv2(x, edge_index)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
-        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
         
         x = self.conv3(x, edge_index)
         x = F.relu(x)
@@ -350,11 +353,11 @@ class HierarchicalGATClassifier(torch.nn.Module):
         # BLOCCO 1
         self.conv1 = GATv2Conv(in_channels, hidden_channels)
         # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
-        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        #self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
         
         # BLOCCO 2
         self.conv2 = GATv2Conv(hidden_channels, hidden_channels)
-        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        #self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
         
         # BLOCCO 3 
         self.conv3 = GATv2Conv(hidden_channels, hidden_channels)
@@ -371,13 +374,13 @@ class HierarchicalGATClassifier(torch.nn.Module):
         
         #il pooling gerarchico taglia i nodi meno importanti sulla base dei punteggi di rilevanza appresi.
         #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
-        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         x = self.conv2(x, edge_index)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
-        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
         
         x = self.conv3(x, edge_index)
         x = F.relu(x)
@@ -408,7 +411,7 @@ class HierarchicalGINClassifier(torch.nn.Module):
         self.conv1 = GINConv(mlp1)
         self.bn1 = BatchNorm1d(hidden_channels)
         #pooling gerarchico
-        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        #self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
         
         # BLOCCO 2
         mlp2 = Sequential(
@@ -419,7 +422,7 @@ class HierarchicalGINClassifier(torch.nn.Module):
         )
         self.conv2 = GINConv(mlp2)
         self.bn2 = BatchNorm1d(hidden_channels)
-        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        #self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
         
         # BLOCCO 3
         mlp3 = Sequential(
@@ -442,7 +445,7 @@ class HierarchicalGINClassifier(torch.nn.Module):
         x = F.dropout(x, p=self.dropout, training=self.training)
         
         # pooling 1
-        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         # forward blocco 2
         x = self.conv2(x, edge_index)
@@ -451,7 +454,7 @@ class HierarchicalGINClassifier(torch.nn.Module):
         x = F.dropout(x, p=self.dropout, training=self.training)
         
         # pooling 2
-        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        #x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
         
         # forward blocco 3
         x = self.conv3(x, edge_index)

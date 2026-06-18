@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 import torch
 import numpy as np
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,global_max_pool
+from torch_geometric.nn import GATv2Conv, global_add_pool, global_mean_pool
 from sklearn.metrics import  balanced_accuracy_score, f1_score
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -118,73 +118,32 @@ class HierarchicalGCNClassifier(torch.nn.Module):
         super().__init__()
         
         # BLOCCO 1
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        # Tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
-        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        self.conv1 = GATv2Conv(in_channels, hidden_channels)
         
         # BLOCCO 2
-        self.conv2 = GI(hidden_channels, hidden_channels)
-        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        self.conv2 = GATv2Conv(hidden_channels, hidden_channels)
         
         # Classificatore finale
-        self.lin = torch.nn.Linear(hidden_channels, out_channels)
+        self.lin = torch.nn.Linear(hidden_channels, hidden_channels)
+        self.lin2 = torch.nn.Linear(hidden_channels, out_channels)
 
     def forward(self, x, edge_index, batch):
         x = self.conv1(x, edge_index)
         x = F.relu(x)
-        x = F.dropout(x, p=0.2, training=self.training)
+        x = F.dropout(x, p=0.5, training=self.training)
         
-        # Il pooling gerarchico taglia i nodi meno importanti.
-        # Restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
-        #x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
-
         x = self.conv2(x, edge_index)
         x = F.relu(x)
-        x = F.dropout(x, p=0.2, training=self.training)
-        
-     
-        #x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
-        
+        x = F.dropout(x, p=0.5, training=self.training)
+    
         # Solo ora applichiamo il Global Mean Pool per condesare le informazioni di tutti i nodi rimasti in un singolo vettore per grafo
         x = global_mean_pool(x, batch)
         
         # Classificazione finale dell'intero grafo
-        out = self.lin(x)
-        return out
-    
-class RobustGraphClassifier(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels):
-        super().__init__()
-        # Strati convolutivi per estrarre le feature locali
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        
-        # Guardrail contro l'over-smoothing: una proiezione lineare diretta dei nodi
-        self.lin_nodes = torch.nn.Linear(in_channels, hidden_channels)
-        
-        # Il classificatore finale lavorerà sulla concatenazione di Mean e Max Pooling
-        # Quindi l'input dell'MLP sarà hidden_channels * 2
-        self.mlp1 = torch.nn.Linear(hidden_channels * 2, hidden_channels)
-        self.mlp2 = torch.nn.Linear(hidden_channels, out_channels)
+        x = self.lin(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
 
-    def forward(self, x, edge_index, batch):
-        # 1. Via Convolutiva
-        x_conv = F.relu(self.conv1(x, edge_index))
-        x_conv = F.dropout(x_conv, p=0.3, training=self.training)
-        x_conv = F.relu(self.conv2(x_conv, edge_index))
-        
-        # 2. Via Lineare Diretta (Preserva l'identità delle feature prima che la GCN le smoothing-izzi)
-        x_lin = F.relu(self.lin_nodes(x))
-        
-        # Fondiamo i due contributi dei nodi
-        x_combined = x_conv + x_lin
-        
-        # 3. POOLING IBRIDO: Concateniamo la media e i picchi massimi
-        mean_p = global_mean_pool(x_combined, batch)
-        max_p = global_max_pool(x_combined, batch)
-        x_pool = torch.cat([mean_p, max_p], dim=-1) # Spazio latente completo del grafo
-        
-        # 4. Classificatore profondo per stabilizzare le 40 classi
-        out = F.relu(self.mlp1(x_pool))
-        out = F.dropout(out, p=0.3, training=self.training)
-        return self.mlp2(out)
+        return x
+    
