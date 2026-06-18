@@ -5,10 +5,10 @@ from sklearn.model_selection import train_test_split
 import torch
 import numpy as np
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,SAGEConv
-from sklearn.metrics import  balanced_accuracy_score, f1_score
-import matplotlib.pyplot as plt
+from torch_geometric.nn import GCNConv, TopKPooling, global_mean_pool,SAGEConv,GATv2Conv,GINConv
+from sklearn.metrics import  balanced_accuracy_score, f1_score,confusion_matrix
 from tqdm import tqdm
+from torch.nn import Linear, BatchNorm1d, ReLU, Sequential
 
 class RedditSubGraphDataset:
     def __init__(self, path, num_graphs, task_type):
@@ -166,7 +166,7 @@ def train_epoch(model, loader, optimizer, loss_fn, device,scaler=None):
     epoch_loss = running_loss / len(loader.dataset)
     return epoch_loss
 
-def evaluate(model, loader, loss_fn, device):
+def evaluate(model, loader, loss_fn, device,test=False):
     model.eval()
     val_loss=0.0
     all_preds = []
@@ -197,10 +197,16 @@ def evaluate(model, loader, loss_fn, device):
     # 'weighted' calcola l'F1 per ogni classe e ne fa la media pesata sul numero di campioni
     f1_bilanciato = f1_score(all_targets, y_pred_binary, average='weighted')
     
+    if test:
+        cm = confusion_matrix(all_targets, y_pred_binary)
+    
     return {
         "balanced_accuracy": acc,
         "f1_score": f1_bilanciato,
-        "val_loss": val_loss / len(loader.dataset)
+        "val_loss": val_loss / len(loader.dataset),
+        "confusion_matrix": cm if test else None,
+        "y_pred": all_preds if test else None,
+        "y_true": all_targets if test else None
     }
 
 
@@ -239,8 +245,6 @@ def train_loop(model, train_loader, val_loader, optimizer, loss_fn, device, num_
         "val_losses": val_losses,
     }
 
-
-
 class HierarchicalGCNClassifier(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.2):
         super().__init__()
@@ -269,6 +273,8 @@ class HierarchicalGCNClassifier(torch.nn.Module):
         
         #il pooling gerarchico taglia i nodi meno importanti sulla base dei punteggi di rilevanza appresi.
         #restituisce il nuovo x, il nuovo edge_index ristretto e il batch aggiornato
+        #_ sono edge_attr che non ce ne sono, perm cioè gli indici dei nodi superstiti, e attn_score cioè i punteggi di rilevanza per nodo
+        # tutte info non rilevanti per il nostro task
         x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         x = self.conv2(x, edge_index)
@@ -342,16 +348,16 @@ class HierarchicalGATClassifier(torch.nn.Module):
         super().__init__()
         
         # BLOCCO 1
-        self.conv1 = GATConv(in_channels, hidden_channels)
+        self.conv1 = GATv2Conv(in_channels, hidden_channels)
         # tiene solo il 50% dei nodi (ratio=0.5) basandosi su un punteggio di rilevanza appreso
         self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
         
         # BLOCCO 2
-        self.conv2 = GATConv(hidden_channels, hidden_channels)
+        self.conv2 = GATv2Conv(hidden_channels, hidden_channels)
         self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
         
         # BLOCCO 3 
-        self.conv3 = GATConv(hidden_channels, hidden_channels)
+        self.conv3 = GATv2Conv(hidden_channels, hidden_channels)
         
         # Classificatore finale
         self.lin = torch.nn.Linear(hidden_channels, out_channels)
@@ -384,3 +390,78 @@ class HierarchicalGATClassifier(torch.nn.Module):
         out = self.lin(x)
         return out
     
+    
+class HierarchicalGINClassifier(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.2):
+        super().__init__()
+        
+        self.dropout = dropout
+
+        # BLOCCO 1
+        # GIN richiede un layer linear all'interno, nel paper originale viene usato un MLP a 2 layer con BatchNorm e ReLU
+        mlp1 = Sequential(
+            Linear(in_channels, hidden_channels),
+            BatchNorm1d(hidden_channels),
+            ReLU(),
+            Linear(hidden_channels, hidden_channels)
+        )
+        self.conv1 = GINConv(mlp1)
+        self.bn1 = BatchNorm1d(hidden_channels)
+        #pooling gerarchico
+        self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
+        
+        # BLOCCO 2
+        mlp2 = Sequential(
+            Linear(hidden_channels, hidden_channels),
+            BatchNorm1d(hidden_channels),
+            ReLU(),
+            Linear(hidden_channels, hidden_channels)
+        )
+        self.conv2 = GINConv(mlp2)
+        self.bn2 = BatchNorm1d(hidden_channels)
+        self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
+        
+        # BLOCCO 3
+        mlp3 = Sequential(
+            Linear(hidden_channels, hidden_channels),
+            BatchNorm1d(hidden_channels),
+            ReLU(),
+            Linear(hidden_channels, hidden_channels)
+        )
+        self.conv3 = GINConv(mlp3)
+        self.bn3 = BatchNorm1d(hidden_channels)
+        
+        #classificatore finale 
+        self.lin = Linear(hidden_channels, out_channels)
+
+    def forward(self, x, edge_index, batch):
+        # forward blocco 1
+        x = self.conv1(x, edge_index)
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # pooling 1
+        x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
+
+        # forward blocco 2
+        x = self.conv2(x, edge_index)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # pooling 2
+        x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
+        
+        # forward blocco 3
+        x = self.conv3(x, edge_index)
+        x = self.bn3(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # pooling globale
+        x = global_mean_pool(x, batch)
+        
+        # classificazione finale 
+        out = self.lin(x)
+        return out

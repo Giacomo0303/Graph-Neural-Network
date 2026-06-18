@@ -110,26 +110,6 @@ def train_loop(model, train_loader, val_loader, optimizer, loss_fn, device, num_
     }
 
 
-def plot_history(history, title):
-    train_loss, val_loss = history["train_losses"], history["val_losses"]
-    epochs = range(1, len(train_loss) + 1)
-    plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_loss, label="Train Loss", color="#1f77b4", linewidth=2)
-    plt.plot(
-        epochs,
-        val_loss,
-        label="Validation Loss",
-        color="#ff7f0e",
-        linewidth=2,
-        linestyle="--",
-    )
-    plt.title(title, fontsize=14, fontweight="bold", pad=15)
-    plt.xlabel("Epoche", fontsize=12)
-    plt.ylabel("Loss", fontsize=12)
-    plt.grid(True, linestyle=":", alpha=0.6)
-    plt.legend(fontsize=11)
-    plt.show()
-
 
 
 
