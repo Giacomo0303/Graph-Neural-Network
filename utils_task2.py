@@ -17,21 +17,31 @@ class RedditLinkDataset:
         print("Caricamento del macro-grafo originale di Reddit...")
         full_graph = Reddit(root=self.path)[0] 
         print(f"Grafo originale: {full_graph.num_nodes} nodi, {full_graph.num_edges} archi")
-     
-        # Selezioniamo casualmente una frazione degli indici degli archi totali
-        num_edges_to_keep = int(full_graph.num_edges * reduction_factor)
-        perm = torch.randperm(full_graph.num_edges)[:num_edges_to_keep]
-        
-        # Ricostruiamo un oggetto Data compatto mantenendo intatte le feature (x) e i target (y)
-        self.dataset = Data(
-            x=full_graph.x,
-            y=full_graph.y,
-            edge_index=full_graph.edge_index[:, perm]
-        )
-        print(f"--> Grafo ridotto al {reduction_factor*100}%: {self.dataset.num_nodes} nodi, {self.dataset.num_edges} archi")
+        del full_graph
+
+        self.dataset = torch.load("subgraph_task2.pt", weights_only=False)
+
+        print("\n=== SOTTOGRAFO PER TASK 2 ===")
+        print(f"Nodi nel sottografo: {self.dataset.num_nodes}")
+        print(f"Archi nel sottografo: {self.dataset.num_edges}")
+        print("==============================================")
         
         # Avviamo lo split degli archi sullo scheletro ridotto
         self.train_set, self.val_set, self.test_set = self.split_edges()
+
+    
+    def subsample_graph(self, full_graph, num_sub_graphs=20):
+        
+        cluster_data = ClusterData(
+            full_graph, 
+            num_parts=num_sub_graphs, 
+            recursive=False
+        )
+
+        # Estraiamo il primo subgraph
+        subgraph = cluster_data[0]
+        return subgraph
+        
 
     def split_edges(self, val_size=0.1, test_size=0.2):
         # Splitting degli archi in train, validation e test

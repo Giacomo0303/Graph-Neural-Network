@@ -26,3 +26,7 @@ best_model_task3a_GCN.pth
 best_model_task3a_GIN.pth
 best_model_task3a_SAGE.pth
 __pycache__/utils_task3_a.cpython-312.pyc
+subgraph_task2.pt
+__pycache__/utils_task2.cpython-312.pyc
+__pycache__/utils_task2.cpython-312.pyc
+__pycache__/utils_task2.cpython-312.pyc
