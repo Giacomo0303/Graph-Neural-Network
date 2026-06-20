@@ -45,10 +45,11 @@ class RedditDataset:
         node_degrees = degree(self.dataset.edge_index[0], num_nodes=num_nodes)
 
         print("Numero di nodi: ", num_nodes)
-        print("Numero di archi: ", num_edges)
+        # Il conteggio va diviso per due in quanto il grafo è non orientato e la matrice di adiacenza è simmetrica
+        print("Numero di archi: ", num_edges//2)
         print("Dimensionalità delle features: ", num_features)
         print(
-            "Di queste, le prime 300 l'embedding di Glove del titolo, le seconde 300 l'embedding di Glove medio di tutti i commenti"
+            "Di queste, le prime 300 l'embedding di Glove del titolo del post, le seconde 300 l'embedding di Glove medio di tutti i commenti"
         )
         print("La feature 601 è lo score di reddit e la 602 è il numero di commenti")
         print("--------------------------------------------------------------------")
@@ -72,7 +73,9 @@ class RedditDataset:
         )
 
     def visualize(self, max_nodes=200):
+        # selezioniamo un nodo in maniera randomica
         node_index = randint(0, self.stats.num_nodes)
+
         row, col = self.dataset.edge_index
 
         # Selezioniamo i nodi di destinazione dove la sorgente è il nostro target_node
@@ -231,18 +234,18 @@ def evaluate(model, val_loader, loss_fn, device, test=False):
     y_true = torch.cat(all_targets, dim=0).numpy()
     y_pred_prob = torch.cat(all_probs, dim=0).numpy()
 
-    f1_macro = f1_score(y_true, y_pred, average="macro")
-    precision_macro = precision_score(y_true, y_pred, average="macro", zero_division=0)
-    recall_macro = recall_score(y_true, y_pred, average="macro")
+    f1_weight = f1_score(y_true, y_pred, average="weighted")
+    precision_weighted = precision_score(y_true, y_pred, average="weighted")
+    recall_weighted = recall_score(y_true, y_pred, average="weighted")
     balanced_acc = balanced_accuracy_score(y_true, y_pred)
     avg_loss = total_loss / total_samples
 
     cm = confusion_matrix(y_true, y_pred) if test else None
 
     return SimpleNamespace(
-        f1_macro=f1_macro,
-        precision_macro=precision_macro,
-        recall_macro=recall_macro,
+        f1_weighted=f1_weight,
+        precision_weighted=precision_weighted,
+        recall_weighted=recall_weighted,
         balanced_acc=balanced_acc,
         avg_loss=avg_loss,
         confusion_matrix=cm,
@@ -280,9 +283,9 @@ def train_loop(
             f"Epoca: {epoch:02d}/{num_epochs:02d} | "
             f"Loss Train: {loss_corrente:.2f} | "
             f"Val Loss: {eval_stats.avg_loss:.2f} | "
-            f"Val F1 Macro: {eval_stats.f1_macro:.2f} | "
-            f"Val Precision: {eval_stats.precision_macro:.2f} | "
-            f"Val Recall: {eval_stats.recall_macro:.2f} |"
+            f"Val F1 weighted: {eval_stats.f1_weighted:.2f} | "
+            f"Val Precision: {eval_stats.precision_weighted:.2f} | "
+            f"Val Recall: {eval_stats.recall_weighted:.2f} |"
             f"Val Balanced Acc: {eval_stats.balanced_acc:.2f}"
         )
 
@@ -336,8 +339,8 @@ class GCNmodel(torch.nn.Module):
         self.conv1 = GCNConv(in_channels, hidden_size)
         self.conv2 = GCNConv(hidden_size, hidden_size)
 
-        self.mlp1 = torch.nn.Linear(hidden_size, hidden_size // 2)
-        self.mlp2 = torch.nn.Linear(hidden_size // 2, out_channels)
+        self.linear1 = torch.nn.Linear(hidden_size, hidden_size // 2)
+        self.linear2 = torch.nn.Linear(hidden_size // 2, out_channels)
 
         self.dropout = dropout
 
@@ -350,11 +353,11 @@ class GCNmodel(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.mlp1(x)
+        x = self.linear1(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.mlp2(x)
+        x = self.linear2(x)
         return x
 
 
@@ -367,8 +370,8 @@ class SAGEConvModel(torch.nn.Module):
         self.conv1 = SAGEConv(in_channels, hidden_size, project=True)
         self.conv2 = SAGEConv(hidden_size, hidden_size, project=True)
 
-        self.mlp1 = torch.nn.Linear(hidden_size, hidden_size // 2)
-        self.mlp2 = torch.nn.Linear(hidden_size // 2, out_channels)
+        self.linear1 = torch.nn.Linear(hidden_size, hidden_size // 2)
+        self.linear2 = torch.nn.Linear(hidden_size // 2, out_channels)
 
         self.dropout = dropout
 
@@ -381,11 +384,11 @@ class SAGEConvModel(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.mlp1(x)
+        x = self.linear1(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.mlp2(x)
+        x = self.linear2(x)
         return x
 
 
@@ -393,13 +396,13 @@ class GATModel(torch.nn.Module):
     def __init__(self, in_channels, hidden_size, out_channels, dropout=0.3):
         super().__init__()
 
-        # Usiamo GATv2Conv per una maggiore flessibilità e capacità di apprendimento rispetto al GAT standard
+        # Usiamo GATv2Conv per una maggiore flessibilità e capacità rispetto al GAT standard
         # inoltre da doc ufficiale essa risolve il problema legato all'attenzione statica.
         self.conv1 = GATv2Conv(in_channels, hidden_size)
         self.conv2 = GATv2Conv(hidden_size, hidden_size)
 
-        self.mlp1 = torch.nn.Linear(hidden_size, hidden_size // 2)
-        self.mlp2 = torch.nn.Linear(hidden_size // 2, out_channels)
+        self.linear1 = torch.nn.Linear(hidden_size, hidden_size // 2)
+        self.linear2 = torch.nn.Linear(hidden_size // 2, out_channels)
 
         self.dropout = dropout
 
@@ -412,9 +415,9 @@ class GATModel(torch.nn.Module):
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.mlp1(x)
+        x = self.linear1(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
 
-        x = self.mlp2(x)
+        x = self.linear2(x)
         return x
