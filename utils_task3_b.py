@@ -220,7 +220,7 @@ class GATv2Classifier(torch.nn.Module):
     
 
    
-class HierarchicalGINClassifier(torch.nn.Module):
+class FlatGINClassifier(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, dropout=0.2):
         super().__init__()
         
@@ -236,9 +236,7 @@ class HierarchicalGINClassifier(torch.nn.Module):
         )
         self.conv1 = GINConv(mlp1)
         self.bn1 = BatchNorm1d(hidden_channels)
-        #pooling gerarchico
-        #self.pool1 = TopKPooling(hidden_channels, ratio=0.5) 
-        
+
         # BLOCCO 2
         mlp2 = Sequential(
             Linear(hidden_channels, hidden_channels),
@@ -248,7 +246,6 @@ class HierarchicalGINClassifier(torch.nn.Module):
         )
         self.conv2 = GINConv(mlp2)
         self.bn2 = BatchNorm1d(hidden_channels)
-        #self.pool2 = TopKPooling(hidden_channels, ratio=0.5)
         
         # BLOCCO 3
         mlp3 = Sequential(
@@ -269,18 +266,12 @@ class HierarchicalGINClassifier(torch.nn.Module):
         x = self.bn1(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
-        
-        # pooling 1
-        #x, edge_index, _, batch, _, _ = self.pool1(x, edge_index, batch=batch)
 
         # forward blocco 2
         x = self.conv2(x, edge_index)
         x = self.bn2(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
-        
-        # pooling 2
-        #x, edge_index, _, batch, _, _ = self.pool2(x, edge_index, batch=batch)
         
         # forward blocco 3
         x = self.conv3(x, edge_index)

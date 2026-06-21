@@ -31,3 +31,7 @@ __pycache__/utils_task2.cpython-312.pyc
 __pycache__/utils_task2.cpython-312.pyc
 __pycache__/utils_task2.cpython-312.pyc
 __pycache__/utils_task2.cpython-312.pyc
+best_model_task3_b_GAT.pth
+best_model_task3_b_GIN.pth
+.gitignore
+best_model_task3_b_SAGE.pth
